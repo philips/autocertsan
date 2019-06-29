@@ -107,7 +107,7 @@ func (dr *domainRenewal) do(ctx context.Context) (time.Duration, error) {
 		}
 	}
 
-	der, leaf, err := dr.m.authorizedCert(ctx, dr.key, dr.ck)
+	der, leaf, err := dr.m.authorizedCert(ctx, dr.key, dr.ck, nil)
 	if err != nil {
 		return 0, err
 	}

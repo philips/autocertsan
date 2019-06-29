@@ -31,8 +31,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/philips/autocertsan/internal/acmetest"
 	"golang.org/x/crypto/acme"
-	"golang.org/x/crypto/acme/autocert/internal/acmetest"
 )
 
 var (
@@ -799,7 +799,7 @@ func TestRevokeFailedAuthz(t *testing.T) {
 	// The first 2 are tsl-sni-02 and tls-sni-01 challenges.
 	// The third time an authorization is created but no viable challenge is found.
 	// See revokedAuthz above for more explanation.
-	if _, err := m.createCert(context.Background(), exampleCertKey); err == nil {
+	if _, err := m.createCert(context.Background(), exampleCertKey, nil); err == nil {
 		t.Errorf("m.createCert returned nil error")
 	}
 	select {
@@ -942,7 +942,7 @@ func TestHostWhitelist(t *testing.T) {
 		{"dummy", false},
 	}
 	for i, test := range tt {
-		err := policy(nil, test.host)
+		_, err := policy(nil, test.host)
 		if err != nil && test.allow {
 			t.Errorf("%d: policy(%q): %v; want nil", i, test.host, err)
 		}

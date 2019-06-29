@@ -58,7 +58,7 @@ func AcceptTOS(tosURL string) bool { return true }
 // It returns a non-nil error if the host should be rejected.
 // The returned error is accessible via tls.Conn.Handshake and its callers.
 // See Manager's HostPolicy field and GetCertificate method docs for more details.
-type HostPolicy func(ctx context.Context, host string) error
+type HostPolicy func(ctx context.Context, host string) ([]string, error)
 
 // HostWhitelist returns a policy where only the specified host names are allowed.
 // Only exact matches are currently supported. Subdomains, regexp or wildcard
@@ -74,17 +74,17 @@ func HostWhitelist(hosts ...string) HostPolicy {
 			whitelist[h] = true
 		}
 	}
-	return func(_ context.Context, host string) error {
+	return func(_ context.Context, host string) ([]string, error) {
 		if !whitelist[host] {
-			return fmt.Errorf("acme/autocert: host %q not configured in HostWhitelist", host)
+			return []string{}, fmt.Errorf("acme/autocert: host %q not configured in HostWhitelist", host)
 		}
-		return nil
+		return []string{}, nil
 	}
 }
 
 // defaultHostPolicy is used when Manager.HostPolicy is not set.
-func defaultHostPolicy(context.Context, string) error {
-	return nil
+func defaultHostPolicy(context.Context, string) ([]string, error) {
+	return []string{}, nil
 }
 
 // Manager is a stateful certificate manager built on top of acme.Client.
@@ -300,10 +300,11 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 	}
 
 	// first-time
-	if err := m.hostPolicy()(ctx, name); err != nil {
+	san, err := m.hostPolicy()(ctx, name)
+	if err != nil {
 		return nil, err
 	}
-	cert, err = m.createCert(ctx, ck)
+	cert, err = m.createCert(ctx, ck, san)
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +401,8 @@ func (m *Manager) HTTPHandler(fallback http.Handler) http.Handler {
 		// because we don't wait for a new certificate issuance here.
 		ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 		defer cancel()
-		if err := m.hostPolicy()(ctx, r.Host); err != nil {
+		_, err := m.hostPolicy()(ctx, r.Host)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
@@ -561,7 +563,7 @@ func encodeECDSAKey(w io.Writer, key *ecdsa.PrivateKey) error {
 //
 // If the domain is already being verified, it waits for the existing verification to complete.
 // Either way, createCert blocks for the duration of the whole process.
-func (m *Manager) createCert(ctx context.Context, ck certKey) (*tls.Certificate, error) {
+func (m *Manager) createCert(ctx context.Context, ck certKey, san []string) (*tls.Certificate, error) {
 	// TODO: maybe rewrite this whole piece using sync.Once
 	state, err := m.certState(ck)
 	if err != nil {
@@ -581,7 +583,7 @@ func (m *Manager) createCert(ctx context.Context, ck certKey) (*tls.Certificate,
 	defer state.Unlock()
 	state.locked = false
 
-	der, leaf, err := m.authorizedCert(ctx, state.key, ck)
+	der, leaf, err := m.authorizedCert(ctx, state.key, ck, san)
 	if err != nil {
 		// Remove the failed state after some time,
 		// making the manager call createCert again on the following TLS hello.
@@ -647,7 +649,7 @@ func (m *Manager) certState(ck certKey) (*certState, error) {
 
 // authorizedCert starts the domain ownership verification process and requests a new cert upon success.
 // The key argument is the certificate private key.
-func (m *Manager) authorizedCert(ctx context.Context, key crypto.Signer, ck certKey) (der [][]byte, leaf *x509.Certificate, err error) {
+func (m *Manager) authorizedCert(ctx context.Context, key crypto.Signer, ck certKey, san []string) (der [][]byte, leaf *x509.Certificate, err error) {
 	client, err := m.acmeClient(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -656,7 +658,7 @@ func (m *Manager) authorizedCert(ctx context.Context, key crypto.Signer, ck cert
 	if err := m.verify(ctx, client, ck.domain); err != nil {
 		return nil, nil, err
 	}
-	csr, err := certRequest(key, ck.domain, m.ExtraExtensions)
+	csr, err := certRequest(key, ck.domain, m.ExtraExtensions, san...)
 	if err != nil {
 		return nil, nil, err
 	}
